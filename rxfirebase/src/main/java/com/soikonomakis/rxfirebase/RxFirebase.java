@@ -24,8 +24,10 @@ import com.firebase.client.ValueEventListener;
 import com.soikonomakis.rxfirebase.FirebaseChildEvent.EventType;
 import com.soikonomakis.rxfirebase.exceptions.FirebaseAuthProviderDisabledException;
 import com.soikonomakis.rxfirebase.exceptions.FirebaseExpiredTokenException;
+import com.soikonomakis.rxfirebase.exceptions.FirebaseGeneralException;
 import com.soikonomakis.rxfirebase.exceptions.FirebaseInvalidTokenException;
 import com.soikonomakis.rxfirebase.exceptions.FirebaseNetworkErrorException;
+import com.soikonomakis.rxfirebase.exceptions.FirebasePermissionDeniedException;
 import rx.Observable;
 import rx.Subscriber;
 import rx.functions.Action0;
@@ -52,6 +54,11 @@ public class RxFirebase {
     return instance;
   }
 
+  //Prevent constructor initialisation
+  private RxFirebase() {
+
+  }
+
   /**
    * Attempts to authenticate to Firebase with an OAuth token from a provider supported by Firebase
    * Login. This method only works for providers that only require a 'access_token' as a parameter
@@ -61,34 +68,17 @@ public class RxFirebase {
    * @param provider {@link String} this is the given provider for login
    * @return an {@link rx.Observable} of {@link com.firebase.client.AuthData} to use
    */
-  public Observable<AuthData> observeAuthWithOauthToken(final Firebase ref,
-      final String token, final String provider) {
+  public Observable<AuthData> observeAuthWithOauthToken(final Firebase ref, final String token,
+      final String provider) {
     return Observable.create(new Observable.OnSubscribe<AuthData>() {
       @Override public void call(final Subscriber<? super AuthData> subscriber) {
         ref.authWithOAuthToken(provider, token, new Firebase.AuthResultHandler() {
           @Override public void onAuthenticated(AuthData authData) {
             subscriber.onNext(authData);
-            subscriber.onCompleted();
           }
 
           @Override public void onAuthenticationError(FirebaseError firebaseError) {
-            switch (firebaseError.getCode()) {
-              case FirebaseError.INVALID_TOKEN:
-                subscriber.onError(new FirebaseInvalidTokenException(firebaseError.getMessage()));
-                break;
-              case FirebaseError.AUTHENTICATION_PROVIDER_DISABLED:
-                subscriber.onError(
-                    new FirebaseAuthProviderDisabledException(firebaseError.getMessage()));
-                break;
-              case FirebaseError.EXPIRED_TOKEN:
-                subscriber.onError(new FirebaseExpiredTokenException(firebaseError.getMessage()));
-                break;
-              case FirebaseError.NETWORK_ERROR:
-                subscriber.onError(new FirebaseNetworkErrorException(firebaseError.getMessage()));
-                break;
-              default:
-                subscriber.onError(new FirebaseException(firebaseError.getMessage()));
-            }
+            attachErrorHandler(subscriber, firebaseError);
           }
         });
       }
@@ -97,13 +87,44 @@ public class RxFirebase {
 
   /**
    * This methods observes a firebase query and returns back
-   * an Observable of the {@link DataSnapshot}
-   * when the firebase client uses a {@link ValueEventListener}
+   * an Observable of the {@link com.firebase.client.DataSnapshot}
+   * when the firebase client uses a {@link com.firebase.client.ValueEventListener}
    *
    * @param ref {@link com.firebase.client.Query} this is reference of a Firebase Query
    * @return an {@link rx.Observable} of datasnapshot to use
    */
   public Observable<DataSnapshot> observeValueEvent(final Query ref) {
+    return Observable.create(new Observable.OnSubscribe<DataSnapshot>() {
+      @Override public void call(final Subscriber<? super DataSnapshot> subscriber) {
+        final ValueEventListener listener = ref.addValueEventListener(new ValueEventListener() {
+          @Override public void onDataChange(DataSnapshot dataSnapshot) {
+            subscriber.onNext(dataSnapshot);
+          }
+
+          @Override public void onCancelled(FirebaseError error) {
+            attachErrorHandler(subscriber, error);
+          }
+        });
+
+        // When the subscription is cancelled, remove the listener
+        subscriber.add(Subscriptions.create(new Action0() {
+          @Override public void call() {
+            ref.removeEventListener(listener);
+          }
+        }));
+      }
+    });
+  }
+
+  /**
+   * This methods observes a firebase query and returns back ONCE
+   * an Observable of the {@link com.firebase.client.DataSnapshot}
+   * when the firebase client uses a {@link com.firebase.client.ValueEventListener}
+   *
+   * @param ref {@link com.firebase.client.Query} this is reference of a Firebase Query
+   * @return an {@link rx.Observable} of datasnapshot to use
+   */
+  public Observable<DataSnapshot> observeSingleValue(final Query ref) {
     return Observable.create(new Observable.OnSubscribe<DataSnapshot>() {
       @Override public void call(final Subscriber<? super DataSnapshot> subscriber) {
         final ValueEventListener listener = new ValueEventListener() {
@@ -112,8 +133,7 @@ public class RxFirebase {
           }
 
           @Override public void onCancelled(FirebaseError error) {
-            // Turn the FirebaseError into a throwable to conform to the API
-            subscriber.onError(new FirebaseException(error.getMessage()));
+            attachErrorHandler(subscriber, error);
           }
         };
 
@@ -130,42 +150,9 @@ public class RxFirebase {
   }
 
   /**
-   * This methods observes a firebase query and returns back ONCE
-   * an Observable of the {@link DataSnapshot}
-   * when the firebase client uses a {@link ValueEventListener}
-   *
-   * @param ref {@link Query} this is reference of a Firebase Query
-   * @return an {@link rx.Observable} of datasnapshot to use
-   */
-  public Observable<DataSnapshot> observeSingleValue(final Query ref) {
-    return Observable.create(new Observable.OnSubscribe<DataSnapshot>() {
-      @Override public void call(final Subscriber<? super DataSnapshot> subscriber) {
-        final ValueEventListener valueEventListener = new ValueEventListener() {
-          @Override public void onDataChange(DataSnapshot dataSnapshot) {
-            subscriber.onNext(dataSnapshot);
-          }
-
-          @Override public void onCancelled(FirebaseError error) {
-            // Turn the FirebaseError into a throwable to conform to the API
-            subscriber.onError(new FirebaseException(error.getMessage()));
-          }
-        };
-        ref.addListenerForSingleValueEvent(valueEventListener);
-
-        // When the subscription is cancelled, remove the listener
-        subscriber.add(Subscriptions.create(new Action0() {
-          @Override public void call() {
-            ref.removeEventListener(valueEventListener);
-          }
-        }));
-      }
-    });
-  }
-
-  /**
    * This methods observes a firebase query and returns back
-   * an Observable of the {@link DataSnapshot}
-   * when the firebase client uses a {@link ChildEventListener}
+   * an Observable of the {@link com.firebase.client.DataSnapshot}
+   * when the firebase client uses a {@link com.firebase.client.ChildEventListener}
    *
    * @param ref {@link Query} this is reference of a Firebase Query
    * @return an {@link rx.Observable} of {@link FirebaseChildEvent}
@@ -174,33 +161,35 @@ public class RxFirebase {
   public Observable<FirebaseChildEvent> observeChildEvent(final Query ref) {
     return Observable.create(new Observable.OnSubscribe<FirebaseChildEvent>() {
       @Override public void call(final Subscriber<? super FirebaseChildEvent> subscriber) {
-        final ChildEventListener childEventListener = new ChildEventListener() {
+        final ChildEventListener childEventListener =
+            ref.addChildEventListener(new ChildEventListener() {
 
-          @Override public void onChildAdded(DataSnapshot dataSnapshot, String previousChildName) {
-            subscriber.onNext(
-                new FirebaseChildEvent(dataSnapshot, previousChildName, EventType.ADDED));
-          }
+              @Override
+              public void onChildAdded(DataSnapshot dataSnapshot, String previousChildName) {
+                subscriber.onNext(
+                    new FirebaseChildEvent(dataSnapshot, previousChildName, EventType.ADDED));
+              }
 
-          @Override
-          public void onChildChanged(DataSnapshot dataSnapshot, String previousChildName) {
-            subscriber.onNext(
-                new FirebaseChildEvent(dataSnapshot, previousChildName, EventType.CHANGED));
-          }
+              @Override
+              public void onChildChanged(DataSnapshot dataSnapshot, String previousChildName) {
+                subscriber.onNext(
+                    new FirebaseChildEvent(dataSnapshot, previousChildName, EventType.CHANGED));
+              }
 
-          @Override public void onChildRemoved(DataSnapshot dataSnapshot) {
-            subscriber.onNext(new FirebaseChildEvent(dataSnapshot, EventType.REMOVED));
-          }
+              @Override public void onChildRemoved(DataSnapshot dataSnapshot) {
+                subscriber.onNext(new FirebaseChildEvent(dataSnapshot, EventType.REMOVED));
+              }
 
-          @Override public void onChildMoved(DataSnapshot dataSnapshot, String previousChildName) {
-            subscriber.onNext(
-                new FirebaseChildEvent(dataSnapshot, previousChildName, EventType.MOVED));
-          }
+              @Override
+              public void onChildMoved(DataSnapshot dataSnapshot, String previousChildName) {
+                subscriber.onNext(
+                    new FirebaseChildEvent(dataSnapshot, previousChildName, EventType.MOVED));
+              }
 
-          @Override public void onCancelled(FirebaseError firebaseError) {
-            subscriber.onError(new FirebaseException(firebaseError.getMessage()));
-          }
-        };
-        ref.addChildEventListener(childEventListener);
+              @Override public void onCancelled(FirebaseError error) {
+                attachErrorHandler(subscriber, error);
+              }
+            });
         // this is used to remove the listener when the subscriber is
         // cancelled (unsubscribe)
         subscriber.add(Subscriptions.create(new Action0() {
@@ -257,17 +246,45 @@ public class RxFirebase {
   }
 
   /**
-   * Functions which filters a stream of {@link rx.Observable} according to firebase
+   * Functions which filters a stream of {@link Observable} according to firebase
    * child event type
    *
    * @param type {@link FirebaseChildEvent}
    * @return {@link Func1} a function which returns a boolean if the type are equals
    */
-  public Func1<FirebaseChildEvent, Boolean> filterChildEvent(final EventType type) {
+  private Func1<FirebaseChildEvent, Boolean> filterChildEvent(final EventType type) {
     return new Func1<FirebaseChildEvent, Boolean>() {
       @Override public Boolean call(FirebaseChildEvent firebaseChildEvent) {
         return firebaseChildEvent.getEventType() == type;
       }
     };
+  }
+
+  /**
+   * This method add to subsriber the proper error according to the
+   * @param subscriber {@link rx.Subscriber}
+   * @param firebaseError {@link com.firebase.client.FirebaseError}
+   * @param <T> generic subscriber
+   */
+  private <T> void attachErrorHandler(Subscriber<T> subscriber, FirebaseError firebaseError) {
+    switch (firebaseError.getCode()) {
+      case FirebaseError.INVALID_TOKEN:
+        subscriber.onError(new FirebaseInvalidTokenException(firebaseError.getMessage()));
+        break;
+      case FirebaseError.AUTHENTICATION_PROVIDER_DISABLED:
+        subscriber.onError(new FirebaseAuthProviderDisabledException(firebaseError.getMessage()));
+        break;
+      case FirebaseError.EXPIRED_TOKEN:
+        subscriber.onError(new FirebaseExpiredTokenException(firebaseError.getMessage()));
+        break;
+      case FirebaseError.NETWORK_ERROR:
+        subscriber.onError(new FirebaseNetworkErrorException(firebaseError.getMessage()));
+        break;
+      case FirebaseError.PERMISSION_DENIED:
+        subscriber.onError(new FirebasePermissionDeniedException(firebaseError.getMessage()));
+        break;
+      default:
+        subscriber.onError(new FirebaseGeneralException(firebaseError.getMessage()));
+    }
   }
 }
