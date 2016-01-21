@@ -7,15 +7,18 @@
 RxJava implementation for the Android [Firebase client](https://www.firebase.com/docs/android/).
 
 ----
+Contents
+--------
+- [Usage](#usage)
+- [Download](#download)
+- [Tests](#tests)
+- [Code style](#code-style)
+- [License](#license)
 
-The project is available on jCenter. In your app build.gradle (or explicit module) you must add this:
-```
-dependencies {
-  compile 'com.soikonomakis:rxfirebase:1.0.0'
-}
-```
 
-Usage (you can check the sample code also):
+
+Usage
+-----
 
 ```java
 public class MainActivity extends AppCompatActivity {
@@ -41,7 +44,30 @@ public class MainActivity extends AppCompatActivity {
 }
 ```
 
-This project still in very early stage and you are welcome to send a pull request.
+Download
+--------
+The project is available on jCenter. In your app build.gradle (or explicit module) you must add this:
+```
+dependencies {
+  compile 'com.soikonomakis:rxfirebase:1.0.0'
+}
+```
+
+
+Tests
+-----
+
+Tests are available in `rxfirebase/src/test/java/` directory and can be executed from Android Studio or CLI with the following command:
+
+```
+./gradlew test
+```
+
+Code style
+----------
+
+Code style used in the project is called `SquareAndroid` from Java Code Styles repository by Square available at: https://github.com/square/java-code-styles.
+
 
 License
 -------
