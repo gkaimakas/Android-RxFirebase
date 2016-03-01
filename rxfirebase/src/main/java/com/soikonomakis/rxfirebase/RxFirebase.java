@@ -137,7 +137,7 @@ public class RxFirebase {
           }
         };
 
-        ref.addValueEventListener(listener);
+        ref.addListenerForSingleValueEvent(listener);
 
         // When the subscription is cancelled, remove the listener
         subscriber.add(Subscriptions.create(new Action0() {
